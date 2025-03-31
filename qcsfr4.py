@@ -99,18 +99,18 @@ def get_beep_level(primary_sensors, backup_sensors, levels):
 
 
 #Alguns casos de teste
-print(get_beep_level([], []))  # experado -1
-print(get_beep_level([100, 100], [5, 10, 20, 40, 70]))  # experado 4
-print(get_beep_level([30, 100], [5, 10, 20, 40, 70]))  # experado 2
-print(get_beep_level([1, 7, 13, 25, 45, 80], [5, 10, 20, 40, 70]))  # experado 0
-print(get_beep_level([2, 4, 5, 5], [1]))  # experado 0
+print(get_beep_level([], [], []))  # experado -1
+print(get_beep_level([100, 100], [100, 100], [5, 10, 20, 40, 70]))  # experado 4
+print(get_beep_level([30, 100], [30, 100],[5, 10, 20, 40, 70]))  # experado 2
+print(get_beep_level([1, 7, 13, 25, 45, 80], [1, 7, 13, 25, 45, 80],[5, 10, 20, 40, 70]))  # experado 0
+print(get_beep_level([2, 4, 5, 5], [2, 4, 5, 5],[1]))  # experado 0
 
-print(get_beep_level([1], [5, 10, 20]))  # experado -1 (falta um sensor)
-print(get_beep_level([1, "a"], [5, 10, 20]))  # experado -1 (sensor invalido)
-print(get_beep_level([1, 2], ["a", 10]))  # Experado -1 (nivel invalido)
-print(get_beep_level([2, 4, 5, 5], []))  # Experado 0 (sem niveis)
+print(get_beep_level([1], [1],[5, 10, 20]))  # experado -1 (falta um sensor)
+print(get_beep_level([1, "a"], [1, "a"],[5, 10, 20]))  # experado -1 (sensor invalido)
+print(get_beep_level([1, 2], [1, 2],["a", 10]))  # Experado -1 (nivel invalido)
+print(get_beep_level([2, 4, 5, 5], [2, 4, 5, 5],[]))  # Experado 0 (sem niveis)
 
 # Testes do data redundancy
-print(get_beep_level([-1, -1], [5, 10, 20, 40, 70]))  # experado -1 
-print(get_beep_level([50, 30], [5, 10, 20, 40, 70]))  # experado 2
-print(get_beep_level([-1, -1], [5, 10, 20, 40, 70]))  # experado -1
+print(get_beep_level([-1, -1], [-1, -1],[5, 10, 20, 40, 70]))  # experado -1 
+print(get_beep_level([50, 30], [50, 30],[5, 10, 20, 40, 70]))  # experado 2
+print(get_beep_level([-1, -1], [-1, -1],[5, 10, 20, 40, 70]))  # experado -1
