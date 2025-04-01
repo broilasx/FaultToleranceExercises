@@ -18,7 +18,7 @@
 
 #Versao sem Fault Tolerance
 
-def get_beep_level(distances, levels):
+def get_beep_level_without_fault_tolerance(distances, levels):
     if len(distances) < 2:
         return -1  # sao necessarios pelo menos 2 sensores 
     
@@ -32,85 +32,91 @@ def get_beep_level(distances, levels):
     return len(levels)  # se nao tiver nenhum nivel correspondente ao objeto mais perto, retorna o beep level mais baixo
 
 # Test cases
-print(get_beep_level([], []))  # Experado -1
-print(get_beep_level([100, 100], [5, 10, 20, 40, 70]))  # Experado 4
-print(get_beep_level([30, 100], [5, 10, 20, 40, 70]))  # Experado 2
-print(get_beep_level([1, 7, 13, 25, 45, 80], [5, 10, 20, 40, 70]))  # Experado 0
-print(get_beep_level([2, 4, 5, 5], [1]))  # Experado 0
+# print(get_beep_level([], []))  # Experado -1
+# print(get_beep_level([100, 100], [5, 10, 20, 40, 70]))  # Experado 4
+# print(get_beep_level([30, 100], [5, 10, 20, 40, 70]))  # Experado 2
+# print(get_beep_level([1, 7, 13, 25, 45, 80], [5, 10, 20, 40, 70]))  # Experado 0
+# print(get_beep_level([2, 4, 5, 5], [1]))  # Experado 0
 
 #Versao com Fault Tolerance
-
-import statistics
-
 # **DATA REDUNDANCY** - guardar valores passados
+import statistics
+from collections import Counter
+
 previous_distances = []
 
-def get_beep_level(primary_sensors, backup_sensors, levels):
-    global previous_distances  # Store past valid readings
+def majority_voting(group):
+    """Aplica majority voting para obter a distância mais frequente em um grupo de 3 sensores."""
+    counter = Counter(group)
+    most_common = counter.most_common(1)
+    return most_common[0][0] if most_common else statistics.median(group)
 
-    # **EXCEPTION HANDLING** - input valido
-    if not isinstance(primary_sensors, list) or not isinstance(backup_sensors, list) or not isinstance(levels, list):
-        return -1  #Tipo de dados recebidos invalidos
+def smooth_readings(distances):
+    """Aplica uma média móvel simples para suavizar leituras."""
+    if len(distances) < 3:
+        return statistics.mean(distances)
+    window_size = min(5, len(distances))
+    return statistics.mean(distances[-window_size:])
 
-    if len(primary_sensors) < 2:
-        return -1  # Sao necessarios pelo menos 2 sensores
+def get_beep_level_with_fault_tolerance(sensors, levels):
+    global previous_distances
 
-    if len(primary_sensors) != len(backup_sensors):
-        return -1  # Cada sensor primario deve ter um sensor de backup correspondente
-
-    if not all(isinstance(d, (int, float)) and d >= 0 for d in primary_sensors + backup_sensors):
-        return -1  # Leituras de sensor invalidas
-
+    # **EXCEPTION HANDLING** - Verificação de entrada
+    if not isinstance(sensors, list) or not isinstance(levels, list):
+        return -1
+    if len(sensors) == 0 or len(sensors) % 3 != 0:
+        return -1  # Lista vazia ou número de sensores não é múltiplo de 3
+    if not all(isinstance(d, (int, float)) and d >= 0 for d in sensors):
+        return -1
     if not all(isinstance(l, (int, float)) and l >= 0 for l in levels):
-        return -1  # Niveis de beep invalidos
-
+        return -1
     if len(levels) == 0:
-        return 0  # Levels nao definidos, retornar beep level mais baixo que neste caso é 0
+        return 0
 
-    # **HARDWARE REDUNDANCY** Vai dar replace a sensores invalidos com sensores de backup
-    validated_sensors = [
-        primary if primary >= 0 else backup
-        for primary, backup in zip(primary_sensors, backup_sensors)
-    ]
+    # **REDUNDANCY AND VOTING** - Agrupar sensores em conjuntos de 3 e aplicar majority voting
+    distances = []
+    for i in range(0, len(sensors), 3):
+        group = sensors[i:i+3]
+        distance = majority_voting(group)
+        distances.append(distance)
 
-    # **TIME REDUNDANCY** Vai remover valores negativos do sensor
-    valid_distances = [d for d in validated_sensors if d >= 0]
+    # **TIME REDUNDANCY** - Suavização das leituras
+    smoothed_distance = smooth_readings(distances)
 
-    if len(valid_distances) < 2:
-        if previous_distances:
-            valid_distances = previous_distances  # Usa a utima leitura de sensor valida
-        else:
-            return -1  # Nao ha leituras de sensores validas
+    # **DATA REDUNDANCY** - Armazenar últimas distâncias válidas
+    previous_distances = distances.copy()
 
-    # **DATA REDUNDANCY** guardar as ultimas distancias validas
-    previous_distances = valid_distances.copy()
-
-    # **SOFTWARE REDUNDANCY** Dois metodos para determinar o beep level // nao sei se é suposto ser bem isto, nao entendi bem este!!!!
-    min_distance = min(valid_distances)
-
-    # Metodo 1: Nivel mais baixo que a distancia minima
+    # **SOFTWARE REDUNDANCY** - Determinar o beep level por dois métodos
+    min_distance = min(distances)
     method_1 = next((i for i, level in enumerate(levels) if min_distance <= level), len(levels))
+    method_2 = next((i for i, level in enumerate(levels) if smoothed_distance <= level), len(levels))
 
-    # Metodo 2: Nivel mais baixo que a mediana das distancias validas
-    method_2 = next((i for i, level in enumerate(levels) if statistics.median(valid_distances) <= level), len(levels))
-
-    # Decisao final, escolher o beep level mais baixo
+    # **GRACEFUL DEGRADATION** - Garantir o beep level mais seguro (mínimo dos dois)
     return min(method_1, method_2)
 
+# Função para executar os testes
+def FR4():
+    test_cases = [
+        ([], [], -1),
+        ([100, 100, 100, 100, 100, 100], [5, 10, 20, 40, 70], 4),
+        ([100, 60, 100, 30, 30, 30, 7, 7, 7], [5, 10, 20, 40, 70], 0), # TC1
+        ([30, 30, 30, 100, 100, 100, 7, 7, 7], [5, 10, 20, 40, 70], 2), # TC2
+        ([1, 1, 1, 7, 7, 7, 13, 13, 13], [5, 10, 20, 40, 70], 0),        # TC3
+        ([2, 2, 2, 4, 4, 4, 5, 5, 5], [1], 0),                          # TC4
+        ([1, 1, 1], [5, 10, 20], -1),                                   # TC5
+        ([1, 1, "a", 2, 2, 2], [5, 10, 20], -1),                        # TC6
+        ([1, 1, 1, 2, 2, 2, 3, 3, 3], ["a", 10], -1),                   # TC7
+        ([2, 2, 2, 4, 4, 4, 5, 5, 5], [], 0),                           # TC8
+        ([-1, -1, -1, -1, -1, -1, -1, -1, -1], [5, 10, 20, 40, 70], -1), # TC9
+        ([50, 50, 50, 30, 30, 30, 40, 40, 40], [5, 10, 20, 40, 70], 2),  # TC10
+        ([-1, -1, -1, -1, -1, -1, -1, -1, -1], [5, 10, 20, 40, 70], -1), # TC11
+    ]
 
-#Alguns casos de teste
-print(get_beep_level([], [], []))  # experado -1
-print(get_beep_level([100, 100], [100, 100], [5, 10, 20, 40, 70]))  # experado 4
-print(get_beep_level([30, 100], [30, 100],[5, 10, 20, 40, 70]))  # experado 2
-print(get_beep_level([1, 7, 13, 25, 45, 80], [1, 7, 13, 25, 45, 80],[5, 10, 20, 40, 70]))  # experado 0
-print(get_beep_level([2, 4, 5, 5], [2, 4, 5, 5],[1]))  # experado 0
+    print("Executing FR4 Test Cases:")
+    for i, (sensors, levels, expected) in enumerate(test_cases):
+        result = get_beep_level_with_fault_tolerance(sensors, levels)
+        print(f"Test Case {i + 1}: {'PASS' if result == expected else 'FAIL'} (Expected: {expected}, Got: {result})")
 
-print(get_beep_level([1], [1],[5, 10, 20]))  # experado -1 (falta um sensor)
-print(get_beep_level([1, "a"], [1, "a"],[5, 10, 20]))  # experado -1 (sensor invalido)
-print(get_beep_level([1, 2], [1, 2],["a", 10]))  # Experado -1 (nivel invalido)
-print(get_beep_level([2, 4, 5, 5], [2, 4, 5, 5],[]))  # Experado 0 (sem niveis)
-
-# Testes do data redundancy
-print(get_beep_level([-1, -1], [-1, -1],[5, 10, 20, 40, 70]))  # experado -1 
-print(get_beep_level([50, 30], [50, 30],[5, 10, 20, 40, 70]))  # experado 2
-print(get_beep_level([-1, -1], [-1, -1],[5, 10, 20, 40, 70]))  # experado -1
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+    FR4()
