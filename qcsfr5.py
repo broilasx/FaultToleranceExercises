@@ -1,11 +1,40 @@
 import logging
-import hashlib
+# import hashlib
 from reedsolo import RSCodec, ReedSolomonError  # Import Reed-Solomon library
 import ast
 import numpy as np
-import copy
+import threading
 
-parameters_hashes = np.empty(4, dtype=object)
+class WatchdogTimer:
+    def __init__(self, timeout, fallback_value):
+        self.timeout = timeout
+        self.fallback_value = fallback_value
+        self.timer = None
+
+    def start(self, func, *args):
+        """
+        Runs a function with a timeout. Returns function result or fallback value if timeout occurs.
+        """
+        result = [self.fallback_value]  # Default to fallback if timeout occurs
+
+        def wrapper():
+            try:
+                result[0] = func(*args)
+            except Exception as e:
+                logging.error(f"Watchdog detected error: {e}")
+                result[0] = self.fallback_value  # Fault isolation: use fallback
+
+        thread = threading.Thread(target=wrapper)
+        thread.start()
+        thread.join(self.timeout)  # Wait for completion up to timeout
+
+        if thread.is_alive():
+            logging.error("Watchdog timeout: Function took too long.")
+            return self.fallback_value  # Return degraded functionality
+
+        return result[0]
+
+
 parameters_rs = np.empty(4, dtype=object)
 
 def count_objects_without_fault_tolerance(image, width, height, threshold):
@@ -44,84 +73,82 @@ def count_objects_without_fault_tolerance(image, width, height, threshold):
     return object_count
 
 
+def tmr_safe_execution(func, timeout,fallback_value, *args):
+    """
+        Executes a function 3 times under watchdog monitoring and returns the majority result.
+        If all executions fail, it returns the fallback value.
+        """
+    watchdog = WatchdogTimer(timeout, fallback_value)
+    results = [watchdog.start(func, *args) for _ in range(3)]
 
+    # Remove invalid results (fallback value) before taking the majority vote
+    valid_results = [r for r in results if r != fallback_value]
 
+    if not valid_results:
+        logging.error("All executions failed. Using degraded functionality.")
+        return fallback_value  # Graceful degradation
 
-
-
-
-
-
-
-
-
-# Time Redundancy Testing (multiple executions)
-def tmr_safe_execution(func, *args):
-    # results = [func(*args), func(*args), func(*args)]
-    results = [func(*args)]
-    return max(set(results), key=results.count)  # Majority vote
+    return max(set(valid_results), key=valid_results.count)  # Majority vote
 
 
 # Initialize Reed-Solomon codec (can correct up to 4 symbol errors)
-rs = RSCodec(4)
+rs = RSCodec(10)
 
 def encode_rs(data):
     """Encodes data using Reed-Solomon for error correction."""
     return rs.encode(bytearray(str(data), 'utf-8'))
 
+
+# Store last known good values for fallback
+last_valid_values = {}
+
+
 def decode_rs(encoded_data, param_name):
     """Decodes and corrects data using Reed-Solomon."""
     try:
-        decoded_bytes = rs.decode(encoded_data)  # Correct errors
+        decoded_bytes = rs.decode(encoded_data)
         if isinstance(decoded_bytes, tuple):
-            decoded_bytes = decoded_bytes[0]  # Extract the actual corrected data  # Decode and correct errors
-        return decoded_bytes.decode('utf-8')
+            decoded_bytes = decoded_bytes[0]  # Extract actual corrected data
+        result = decoded_bytes.decode('utf-8')
+
+        # Store last valid value for fallback
+        last_valid_values[param_name] = result
+        return result
+
     except ReedSolomonError:
         logging.error(f"Soft error detected in '{param_name}', unable to correct.")
-        return None
 
+        # Fault Isolation: Use last valid value instead of returning None
+        if param_name in last_valid_values:
+            logging.warning(f"Using last known good value for '{param_name}'.")
+            return last_valid_values[param_name]
 
+        return None  # Graceful Degradation: No valid fallback
 
 def compare_rs(data,encoded_data,param_name):
     b = decode_rs(encoded_data,param_name)
-
     try:
         b = ast.literal_eval(str(b))  # Ensure it is correctly parsed as a Python object
     except (ValueError, SyntaxError):
         logging.error(f"Failed to evaluate decoded data for {param_name}, using original.")
-        return copy.deepcopy(data)  # Return a safe copy of the original data
+        return data
 
     if b == data:
-        return copy.deepcopy(data)  # Return a deep copy to prevent unintended reference changes
+        return data
     else:
-        return copy.deepcopy(b)  # Return a deep copy of the corrected data
-
-
-def compute_hash(parameter):
-    """Generate a simple hash of parameter data so that it can be compared to detect soft errors."""
-    hash_obj = hashlib.md5(str(parameter).encode())
-    return hash_obj.hexdigest()
+        return b
 
 
 # Configure logging
 logging.basicConfig(level=logging.ERROR, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def verify_hash(parameter, stored_hash, param_name):
-    """Compare stored hash with newly computed hash to detect errors."""
-    new_hash = compute_hash(parameter)
-    if new_hash != stored_hash:
-        logging.error(f"Soft error detected in parameter '{param_name}'. Expected hash mismatch.")
-        return False
-    return True
-
 
 def count_objects_with_fault_tolerance(image, width, height, threshold):
 
-
     '''
     Input Parameters:
-        image = Matrix with dimensions 'width' and 'height' (List of floats)
+        image = Matrix with dimensions 'width' and 'height' (list with lists of floats)
         width = Width of the image (int)
         height = Height of the image (int)
         threshold = Threshold value to detect objects (float)
@@ -146,18 +173,18 @@ def count_objects_with_fault_tolerance(image, width, height, threshold):
         logging.error("Invalid threshold: Must be a numerical value.")
         return -1
 
-    # Decode parameters with error correction
-    # image = eval(decode_rs(parameters_rs[0], "image"))
-    # width = int(decode_rs(parameters_rs[1], "width"))
-    # height = int(decode_rs(parameters_rs[2], "height"))
-    # threshold = float(decode_rs(parameters_rs[3], "threshold"))
-
-
-
     # # Ensure successful recovery, else return failure state
     # if None in (image, width, height, threshold):
     #     return -1
+    # Encode parameters using RS codes
+    parameters_rs[0] = encode_rs(image)
+    parameters_rs[1] = encode_rs(width)
+    parameters_rs[2] = encode_rs(height)
+    parameters_rs[3] = encode_rs(threshold)
 
+    visited = set()
+    object_count = 0
+    object_count_rs = encode_rs(object_count)
 
     def bfs(x, y,visited_rs):
         try:
@@ -170,9 +197,6 @@ def count_objects_with_fault_tolerance(image, width, height, threshold):
             # visited.union(visited_temp)
             visited.add((x, y))
             # visited_rs = encode_rs(visited)
-
-
-
 
             while queue:
                 # queue = compare_rs(queue, queue_rs, "queue")
@@ -198,15 +222,10 @@ def count_objects_with_fault_tolerance(image, width, height, threshold):
                         # visited_rs = encode_rs(visited)
 
         except Exception as e:
-            logging.error(f"Error during BFS traversal: {e}")
+            logging.error(f"Error during BFS traversal: {e}") # Fault Isolation: if bfs crashes, it's only the function, not the whole process
             return -1
 
     try:
-        visited = set()
-        object_count = 0
-        object_count_rs = encode_rs(object_count)
-
-
         for i in range(compare_rs(height,parameters_rs[2],"height") ):
             for j in range(compare_rs(width,parameters_rs[1],"width")):
                 visited_rs = encode_rs(visited)
@@ -220,60 +239,35 @@ def count_objects_with_fault_tolerance(image, width, height, threshold):
         return object_count
     except Exception as e:
         logging.error(f"Unexpected error in count_objects: {e}")
-        return -1  # Return a safe invalid value
+        return -1  # Graceful Degradation
 
 
 # Sample Test Cases
 def FR5():
     test_cases = [
+
         ([[0.2, 0.2], [0.2, 0.2]], 2, 2, 0.1), #TC1
         ([[0.2, 0.2], [0.2, 0.2]], 2, 2, 0.3), #TC2
         ([[0.2]], 1, 1, 0.1), #TC3
         ([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]], 3, 3, 0.1), #TC4
         ([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]], 3, 3, 0.1), #TC5
-
         ([], 0, 0, 0.1),  # Edge case: empty image
         ([[0.2, "X"], [0.2, 0.2]], 2, 2, 0.1),  # Invalid data
-    ]
 
+    ]
     # # Execute without fault tolerance
     # for i, (image, width, height, threshold) in enumerate(test_cases):
     #     print(f"Test Case {i + 1}: {count_objects_without_fault_tolerance(image, width, height, threshold)}")
 
-
-
-
-
-
-
-
+    # Watchdog parameters
+    timeout = 2  # Max time per function execution (seconds)
+    fallback_value = -1  # Fallback value if all executions fail
 
     # Execute with fault tolerance
     for i, (image, width, height, threshold) in enumerate(test_cases):
 
-        # parameters_hashes[0] = compute_hash(image)
-        # parameters_hashes[1] = compute_hash(width)
-        # parameters_hashes[2] = compute_hash(height)
-        # parameters_hashes[3] = compute_hash(threshold)
-
-
-        # Encode parameters using RS codes
-        parameters_rs[0] = encode_rs(image)
-        parameters_rs[1] = encode_rs(width)
-        parameters_rs[2] = encode_rs(height)
-        parameters_rs[3] = encode_rs(threshold)
-
-
-
         #print(compare_rs(image,parameters_rs[0],"width"))
-
-        print(f"Test Case {i + 1}: {tmr_safe_execution(count_objects_with_fault_tolerance, image, width, height, threshold)}")
-        parameters_hashes[:] = 0
-
-
-
-
-
+        print(f"Test Case {i + 1}: {tmr_safe_execution(count_objects_with_fault_tolerance, timeout, fallback_value, image, width, height, threshold)}")
 
 
 
