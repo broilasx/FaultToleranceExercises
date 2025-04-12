@@ -18,18 +18,19 @@
 
 #Versao sem Fault Tolerance
 
-def get_beep_level_without_fault_tolerance(distances, levels):
-    if len(distances) < 2:
-        return -1  # sao necessarios pelo menos 2 sensores 
+def get_beep_level_without_fault_tolerance(distances, levels): 
     
-    min_distance = min(distances)  # vai buscar o objeto mais perto
+    if distances:
+        min_distance = min(distances)  # vai buscar o objeto mais perto
     
+    if not distances:
+        return -1
     # procura o nivel correspondente ao objeto mais perto
-    for i, level in enumerate(levels):
-        if min_distance <= level:
+    for i, level in reversed(list(enumerate(levels))):
+        if level <= min_distance:
             return i
     
-    return len(levels)  # se nao tiver nenhum nivel correspondente ao objeto mais perto, retorna o beep level mais baixo
+    return 0  # se nao tiver nenhum nivel correspondente ao objeto mais perto, retorna o beep level mais baixo
 
 # Test cases
 # print(get_beep_level([], []))  # Experado -1
@@ -181,10 +182,10 @@ def FR4():
 
     print("Executing FR4 Test Cases:")
     for i, (sensors, levels, expected) in enumerate(test_cases):
-        result = get_beep_level_with_fault_tolerance(sensors, levels)
+        result = get_beep_level_without_fault_tolerance(sensors, levels)
         print(f"Test Case {i + 1}: {'PASS' if result == expected else 'FAIL'} (Expected: {expected}, Got: {result})")
 
 # Executar os testes
 if __name__ == '__main__':
-    #FR4()
-    simulate_reverse_drive()
+    FR4()
+    #simulate_reverse_drive()
